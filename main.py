@@ -22,7 +22,11 @@ async def start_conversation():
             if response.status == 200:
                 data = await response.json()
                 return data["conversations"][0]["sid"]
-            return None
+            else:
+                # Log the response for debugging if request fails
+                error_data = await response.text()
+                print(f"Error starting conversation: {error_data}")
+                return None
 
 async def send_message(conversation_id, message):
     """Sends a message and gets response from Pi.ai."""
