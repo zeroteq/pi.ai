@@ -1,5 +1,10 @@
-import json
-from typing import AsyncResult, Messages, Cookies
+from typing import Any, Dict, List
+
+# Assuming these are the types based on your original code
+AsyncResult = Any  # Or a more specific type if needed
+Messages = List[Dict[str, str]]  # Assuming messages are a list of dictionaries with string keys and values
+Cookies = Dict[str, str]  # Assuming cookies are a dictionary with string keys and values
+
 from .base_provider import AsyncGeneratorProvider, format_prompt
 from ..requests import StreamSession, get_args_from_nodriver, raise_for_status, merge_cookies
 
@@ -8,7 +13,6 @@ class Pi(AsyncGeneratorProvider):
     working = True
     use_nodriver = True
     supports_stream = True
-    use_nodriver = True
     default_model = "pi"
     models = [default_model]
     _headers: dict = None
