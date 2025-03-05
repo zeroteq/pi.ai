@@ -1,41 +1,100 @@
-from fastapi import FastAPI
-import asyncio
+from requests.cookies import RequestsCookieJar
 import json
-from aiohttp import ClientSession
+from ..typing import AsyncResult, Messages, Cookies
+from .base_provider import AsyncGeneratorProvider, format_prompt
+from ..requests import StreamSession, get_args_from_nodriver, raise_for_status, merge_cookies
 
-app = FastAPI()
+class Pi(AsyncGeneratorProvider):
+    url = "https://pi.ai/talk"
+    working = True
+    use_nodriver = True
+    supports_stream = True
+    default_model = "pi"
+    models = [default_model]
+    _headers: dict = None
+    _cookies: Cookies = {}
 
-class PiAI:
-    BASE_URL = "https://pi.ai"
+    @classmethod
+    async def create_async_generator(
+        cls,
+        model: str,
+        messages: Messages,
+        stream: bool,
+        proxy: str = None,
+        timeout: int = 180,
+        conversation_id: str = None,
+        **kwargs
+    ) -> AsyncResult:
+        if cls._headers is None:
+            args = await get_args_from_nodriver(cls.url, proxy=proxy, timeout=timeout)
+            cls._cookies = args.get("cookies", {})
+            cls._headers = args.get("headers")
+        
+        # Handle cookies properly
+        cookies = RequestsCookieJar()
+        for cookie_name, cookie_value in cls._cookies.items():
+            cookies.set(cookie_name, cookie_value)
 
-    @staticmethod
-    async def start_conversation(session: ClientSession):
-        async with session.post(f"{PiAI.BASE_URL}/api/chat/start", json={}) as response:
-            data = await response.json()
-            return data['conversations'][0]['sid']
+        headers = {
+            'accept': 'application/json',
+            'x-api-version': '3',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
 
-    @staticmethod
-    async def ask_question(prompt: str, conversation_id: str = None):
-        async with ClientSession() as session:
+        async with StreamSession(headers=headers, cookies=cookies, proxy=proxy) as session:
             if not conversation_id:
-                conversation_id = await PiAI.start_conversation(session)
+                conversation_id = await cls.start_conversation(session)
+                prompt = format_prompt(messages)
+            else:
+                prompt = messages[-1]["content"]
+            answer = cls.ask(session, prompt, conversation_id)
+            async for line in answer:
+                if "text" in line:
+                    yield line["text"]        
 
-            json_data = {
-                "text": prompt,
-                "conversation": conversation_id,
-                "mode": "BASE",
-            }
+    @classmethod
+    async def start_conversation(cls, session: StreamSession) -> str:
+        headers = {
+            'accept': 'application/json',
+            'x-api-version': '3',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
 
-            async with session.post(f"{PiAI.BASE_URL}/api/chat", json=json_data) as response:
-                async for line in response.content:
-                    try:
-                        data = json.loads(line.decode().strip().split("data: ")[1])
-                        if "text" in data:
-                            return data["text"]
-                    except:
-                        continue
+        # Ensure cookies are passed in the request
+        cookies = RequestsCookieJar()
+        for cookie_name, cookie_value in cls._cookies.items():
+            cookies.set(cookie_name, cookie_value)
 
-@app.get("/chat")
-async def chat(prompt: str, conversation_id: str = None):
-    response = await PiAI.ask_question(prompt, conversation_id)
-    return {"response": response}
+        async with session.post('https://pi.ai/api/chat/start', data="{}", headers=headers, cookies=cookies) as response:
+            await raise_for_status(response)
+            return (await response.json())['conversations'][0]['sid']
+        
+    async def get_chat_history(session: StreamSession, conversation_id: str):
+        params = {
+            'conversation': conversation_id,
+        }
+        async with session.get('https://pi.ai/api/chat/history', params=params) as response:
+            await raise_for_status(response)
+            return await response.json()
+
+    @classmethod
+    async def ask(cls, session: StreamSession, prompt: str, conversation_id: str):
+        json_data = {
+            'text': prompt,
+            'conversation': conversation_id,
+            'mode': 'BASE',
+        }
+
+        # Ensure cookies are passed in the request
+        cookies = RequestsCookieJar()
+        for cookie_name, cookie_value in cls._cookies.items():
+            cookies.set(cookie_name, cookie_value)
+
+        async with session.post('https://pi.ai/api/chat', json=json_data, cookies=cookies) as response:
+            await raise_for_status(response)
+            cls._cookies = merge_cookies(cls._cookies, response)
+            async for line in response.iter_lines():
+                if line.startswith(b'data: {"text":'):
+                    yield json.loads(line.split(b'data: ')[1])
+                elif line.startswith(b'data: {"title":'):
+                    yield json.loads(line.split(b'data: ')[1])
