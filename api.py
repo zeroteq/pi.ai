@@ -1,6 +1,5 @@
-from requests.cookies import RequestsCookieJar
 import json
-from ..typing import AsyncResult, Messages, Cookies
+from typing import AsyncResult, Messages, Cookies
 from .base_provider import AsyncGeneratorProvider, format_prompt
 from ..requests import StreamSession, get_args_from_nodriver, raise_for_status, merge_cookies
 
@@ -9,6 +8,7 @@ class Pi(AsyncGeneratorProvider):
     working = True
     use_nodriver = True
     supports_stream = True
+    use_nodriver = True
     default_model = "pi"
     models = [default_model]
     _headers: dict = None
@@ -29,19 +29,7 @@ class Pi(AsyncGeneratorProvider):
             args = await get_args_from_nodriver(cls.url, proxy=proxy, timeout=timeout)
             cls._cookies = args.get("cookies", {})
             cls._headers = args.get("headers")
-        
-        # Handle cookies properly
-        cookies = RequestsCookieJar()
-        for cookie_name, cookie_value in cls._cookies.items():
-            cookies.set(cookie_name, cookie_value)
-
-        headers = {
-            'accept': 'application/json',
-            'x-api-version': '3',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-
-        async with StreamSession(headers=headers, cookies=cookies, proxy=proxy) as session:
+        async with StreamSession(headers=cls._headers, cookies=cls._cookies, proxy=proxy) as session:
             if not conversation_id:
                 conversation_id = await cls.start_conversation(session)
                 prompt = format_prompt(messages)
@@ -54,18 +42,10 @@ class Pi(AsyncGeneratorProvider):
 
     @classmethod
     async def start_conversation(cls, session: StreamSession) -> str:
-        headers = {
+        async with session.post('https://pi.ai/api/chat/start', data="{}", headers={
             'accept': 'application/json',
-            'x-api-version': '3',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-
-        # Ensure cookies are passed in the request
-        cookies = RequestsCookieJar()
-        for cookie_name, cookie_value in cls._cookies.items():
-            cookies.set(cookie_name, cookie_value)
-
-        async with session.post('https://pi.ai/api/chat/start', data="{}", headers=headers, cookies=cookies) as response:
+            'x-api-version': '3'
+        }) as response:
             await raise_for_status(response)
             return (await response.json())['conversations'][0]['sid']
         
@@ -84,13 +64,7 @@ class Pi(AsyncGeneratorProvider):
             'conversation': conversation_id,
             'mode': 'BASE',
         }
-
-        # Ensure cookies are passed in the request
-        cookies = RequestsCookieJar()
-        for cookie_name, cookie_value in cls._cookies.items():
-            cookies.set(cookie_name, cookie_value)
-
-        async with session.post('https://pi.ai/api/chat', json=json_data, cookies=cookies) as response:
+        async with session.post('https://pi.ai/api/chat', json=json_data) as response:
             await raise_for_status(response)
             cls._cookies = merge_cookies(cls._cookies, response)
             async for line in response.iter_lines():
