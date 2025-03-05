@@ -23,9 +23,10 @@ async def start_conversation():
                 data = await response.json()
                 return data["conversations"][0]["sid"]
             else:
-                # Log the response for debugging if request fails
+                # Log the full response for debugging if request fails
                 error_data = await response.text()
-                print(f"Error starting conversation: {error_data}")
+                print(f"Error starting conversation: Status Code {response.status}")
+                print(f"Error Response: {error_data}")
                 return None
 
 async def send_message(conversation_id, message):
